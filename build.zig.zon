@@ -1,0 +1,18 @@
+.{
+    .name = .phaffii_analyze,
+    .version = "0.0.0",
+    .fingerprint = 0xeae14f7a96dba2df, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .fasta = .{
+            .url = "git+https://github.com/tnaums/fasta#2a0498a8fd9fe3aae0def26ce40f50fd346da6d3",
+            .branch = "main",
+            .hash = "fasta-0.0.0-NNn2trFiAAAB-hAQh39S10GWsL8mUTMejTHiLfhAuU3m",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

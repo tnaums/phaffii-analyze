@@ -3,8 +3,20 @@ const fasta = @import("fasta");
 const Io = std.Io;
 
 const Komagataella = struct {
-    plasmid: fasta.DNA,
+    plasmid: *fasta.DNA,
 };
+
+fn isInducible(k: Komagataella) bool {
+    const d = std.mem.indexOf(u8, k.plasmid.sequence, "AGATCTAACATCCAAA");
+    const e = std.mem.indexOf(u8, k.plasmid.sequence, "ATTCGAAACGA") orelse 0;
+
+    if (d) |value| {
+        if (value == 0 and e == 930) {
+            return true;
+        }
+    }
+    return false;
+}
 
 pub fn main(init: std.process.Init) !void {
     const stdout = std.Io.File.stdout();
@@ -28,7 +40,7 @@ pub fn main(init: std.process.Init) !void {
     defer myPlasmid.deinit(init.gpa);
 
     const k = Komagataella{
-        .plasmid = myPlasmid,
+        .plasmid = &myPlasmid,
     };
 
     const fs = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.plasmid});
@@ -36,5 +48,9 @@ pub fn main(init: std.process.Init) !void {
     try stdout.writeStreamingAll(init.io, fs);
 
     try myPlasmid.mapDNA(init.gpa, init.io, stdout);
+    const b = isInducible(k);
+    if (b) {
+        try stdout.writeStreamingAll(init.io, "The plasmid is inducible!\n");
+    }
     
 }

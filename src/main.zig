@@ -18,6 +18,36 @@ fn isInducible(k: Komagataella) bool {
     return false;
 }
 
+fn isSecreted(k: Komagataella) bool {
+    if (std.mem.eql(u8, k.plasmid.sequence[940..949], "ATGAGATTT") and
+            (std.mem.eql(u8, k.plasmid.sequence[1198..1207], "GCTGAAGCT"))
+        ) {
+        std.debug.print("{s}\n", .{k.plasmid.sequence[940..949]});
+        std.debug.print("{s}\n", .{k.plasmid.sequence[1198..1207]});
+        return true;
+    }
+    return false;
+}
+
+fn matureProtein(k: Komagataella, allocator: std.mem.Allocator) !void {
+    const endpoint = std.mem.indexOf(u8, k.plasmid.sequence, "TCTAGA");
+    if (endpoint) |v| {
+        const sequence = k.plasmid.sequence[1207..v];
+        var coding = try fasta.DNA.init(allocator, "mature", sequence);
+        defer coding.deinit(allocator);
+        try coding.addTranslation(allocator);
+        var protein: fasta.Protein = undefined;
+        defer protein.deinit(allocator);
+        if (coding.translation) |value| {
+            protein = try fasta.Protein.init(allocator, "mature", value[0]);
+        }
+        std.debug.print("{f}\n", .{protein});
+        return;
+    }
+    std.debug.print("endpoint not found\n", .{});
+
+}
+
 pub fn main(init: std.process.Init) !void {
     const stdout = std.Io.File.stdout();
     
@@ -37,6 +67,7 @@ pub fn main(init: std.process.Init) !void {
     defer producer_task.cancel(init.io) catch {};
 
     var myPlasmid = try queue.getOne(init.io);
+    try myPlasmid.addTranslation(init.gpa);
     defer myPlasmid.deinit(init.gpa);
 
     const k = Komagataella{
@@ -52,5 +83,10 @@ pub fn main(init: std.process.Init) !void {
     if (b) {
         try stdout.writeStreamingAll(init.io, "The plasmid is inducible!\n");
     }
+    const b2 = isSecreted(k);
+    if (b2) {
+        try stdout.writeStreamingAll(init.io, "The protein is secreted.\n");
+    }
+    try matureProtein(k, init.gpa);
     
 }

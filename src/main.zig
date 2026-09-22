@@ -3,7 +3,19 @@ const fasta = @import("fasta");
 const Io = std.Io;
 
 const Komagataella = struct {
-    plasmid: *fasta.DNA,
+    plasmid: fasta.DNA,
+
+    pub fn init(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !Komagataella {
+        var dna = try parseSingleDNA(io, allocator, filepath);
+        try dna.addTranslation(allocator);
+        return Komagataella{
+            .plasmid = dna,
+        };
+    }
+
+    pub fn deinit(self: Komagataella, allocator: std.mem.Allocator) void {
+        self.plasmid.deinit(allocator);
+    }
 };
 
 fn isInducible(k: Komagataella) bool {
@@ -22,8 +34,6 @@ fn isSecreted(k: Komagataella) bool {
     if (std.mem.eql(u8, k.plasmid.sequence[940..949], "ATGAGATTT") and
             (std.mem.eql(u8, k.plasmid.sequence[1198..1207], "GCTGAAGCT"))
         ) {
-        std.debug.print("{s}\n", .{k.plasmid.sequence[940..949]});
-        std.debug.print("{s}\n", .{k.plasmid.sequence[1198..1207]});
         return true;
     }
     return false;
@@ -48,6 +58,62 @@ fn matureProtein(k: Komagataella, allocator: std.mem.Allocator) !void {
 
 }
 
+pub fn parseSingleDNA(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !fasta.DNA {
+    // open file
+    const file = try std.Io.Dir.cwd().openFile(io, filepath, .{});
+    defer file.close(io);
+
+
+    const state = enum { inHeader, inSequence };
+    var myState: ?state = null;
+    // initialize ArrayLists
+    var header = std.ArrayList(u8).empty;
+    defer header.deinit(allocator);
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+
+    var buf: [1024]u8 = undefined;
+    // parse out the info
+    while (true) {
+        const n = file.readStreaming(io, &.{&buf}) catch |err| {
+            if (err == error.EndOfStream) break;
+            return err;
+        };
+        if (n == 0) {
+            if (header.items.len == 0) break;
+            break;
+        }
+        var i: u16 = 0;
+        while (i < n) : (i += 1) {
+            if (myState) |s| {
+                switch (s) {
+                    .inHeader => {
+                        if (buf[i] == '\n') {
+                            myState = state.inSequence;
+                            continue;
+                        }
+                        try header.append(allocator, buf[i]);
+                    },
+                    .inSequence => {
+                        if (buf[i] == '>') { // if a second sequence begins, just return the first one
+                            return try fasta.DNA.init(allocator, header.items, sequence.items);
+                        }
+                        if (buf[i] != '\n') {
+                            try sequence.append(allocator, std.ascii.toUpper(buf[i]));
+                        }
+                    },
+                }
+            } else {
+                if (buf[i] == '>') {
+                    myState = state.inHeader;
+                    continue;
+                }
+            }
+        }
+    }
+    return try fasta.DNA.init(allocator, header.items, sequence.items);    
+}
+
 pub fn main(init: std.process.Init) !void {
     const stdout = std.Io.File.stdout();
     
@@ -58,27 +124,30 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const filepath = args[1];
-    const file = try std.Io.Dir.cwd().openFile(init.io, filepath, .{});
-    defer file.close(init.io);
+    // const file = try std.Io.Dir.cwd().openFile(init.io, filepath, .{});
+    // defer file.close(init.io);
 
-    // Starting DNA queue
-    var queue: std.Io.Queue(fasta.DNA) = .init(&.{});
-    var producer_task = try init.io.concurrent(fasta.parseDNA, .{ init.io, init.gpa, &queue, file });
-    defer producer_task.cancel(init.io) catch {};
+    // // Starting DNA queue
+    // var queue: std.Io.Queue(fasta.DNA) = .init(&.{});
+    // var producer_task = try init.io.concurrent(fasta.parseDNA, .{ init.io, init.gpa, &queue, file });
+    // defer producer_task.cancel(init.io) catch {};
 
-    var myPlasmid = try queue.getOne(init.io);
-    try myPlasmid.addTranslation(init.gpa);
-    defer myPlasmid.deinit(init.gpa);
+    // var myPlasmid = try queue.getOne(init.io);
+    // try myPlasmid.addTranslation(init.gpa);
+    // defer myPlasmid.deinit(init.gpa);
 
-    const k = Komagataella{
-        .plasmid = &myPlasmid,
-    };
+    // const k = Komagataella{
+    //     .plasmid = &myPlasmid,
+    // };
+
+    var k = try Komagataella.init(init.io, init.gpa, filepath);
+    defer k.deinit(init.gpa);
 
     const fs = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.plasmid});
     defer init.gpa.free(fs);
     try stdout.writeStreamingAll(init.io, fs);
 
-    try myPlasmid.mapDNA(init.gpa, init.io, stdout);
+    try k.plasmid.mapDNA(init.gpa, init.io, stdout);
     const b = isInducible(k);
     if (b) {
         try stdout.writeStreamingAll(init.io, "The plasmid is inducible!\n");
@@ -88,5 +157,9 @@ pub fn main(init: std.process.Init) !void {
         try stdout.writeStreamingAll(init.io, "The protein is secreted.\n");
     }
     try matureProtein(k, init.gpa);
-    
+
+    const d2 = try Komagataella.init(init.io, init.gpa, "sequences/pTAN213.fa");
+    defer d2.deinit(init.gpa);
+
+
 }

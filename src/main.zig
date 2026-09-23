@@ -3,11 +3,13 @@ const fasta = @import("fasta");
 const Io = std.Io;
 
 const promoter = enum { aox1, gap, unknown };
+const secretion = enum { alpha, ost, cytoplasmic };
 
 const Komagataella = struct {
     plasmid: fasta.DNA,
     promoter: promoter,
     coding: fasta.DNA,
+    secretion: secretion,
 
     pub fn init(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !Komagataella {
         var dna = try parseSingleDNA(io, allocator, filepath);
@@ -15,10 +17,12 @@ const Komagataella = struct {
         const p = checkPromoter(dna);
         var codingRegion = try getCodingRegion(allocator, dna, p);
         try codingRegion.addTranslation(allocator);
+        const s = determineSecretion(codingRegion);
         return Komagataella{
             .plasmid = dna,
             .promoter = p,
             .coding = codingRegion,
+            .secretion = s,
         };
     }
 
@@ -59,6 +63,16 @@ const Komagataella = struct {
             },
             .unknown => {unreachable;},
         }
+    }
+
+    fn determineSecretion(dna: fasta.DNA) secretion {
+        if  (std.mem.startsWith(u8, dna.sequence, "ATGAGATTTCCTTCA")) {
+            return secretion.alpha;
+        }
+        if (std.mem.startsWith(u8, dna.sequence, "ATGAGGCAGGTTTGG")) {
+            return secretion.ost;
+        }
+        return secretion.cytoplasmic;
     }
 };
 
@@ -174,10 +188,21 @@ pub fn main(init: std.process.Init) !void {
             try stdout.writeStreamingAll(init.io, "Unknown promoter type.\n");
         },
     }
-    const b2 = isSecreted(k);
-    if (b2) {
-        try stdout.writeStreamingAll(init.io, "The protein is secreted.\n");
+    switch (k.secretion) {
+        .alpha => {
+            try stdout.writeStreamingAll(init.io, "Secreted protein with alpha factor.\n");
+        },
+        .ost => {
+            try stdout.writeStreamingAll(init.io, "Secreted protein with ost1.\n");
+        },
+        .cytoplasmic => {
+            try stdout.writeStreamingAll(init.io, "Possible cytoplasmic protein.\n");
+        }
     }
+    // const b2 = isSecreted(k);
+    // if (b2) {
+    //     try stdout.writeStreamingAll(init.io, "The protein is secreted.\n");
+    // }
     try matureProtein(k, init.gpa);
     const coding = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.coding});
     defer init.gpa.free(coding);

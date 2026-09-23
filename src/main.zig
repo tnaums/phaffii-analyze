@@ -2,38 +2,70 @@ const std = @import("std");
 const fasta = @import("fasta");
 const Io = std.Io;
 
+const promoter = enum { aox1, gap, unknown };
+
 const Komagataella = struct {
     plasmid: fasta.DNA,
+    promoter: promoter,
+    coding: fasta.DNA,
 
     pub fn init(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !Komagataella {
         var dna = try parseSingleDNA(io, allocator, filepath);
         try dna.addTranslation(allocator);
+        const p = checkPromoter(dna);
+        var codingRegion = try getCodingRegion(allocator, dna, p);
+        try codingRegion.addTranslation(allocator);
         return Komagataella{
             .plasmid = dna,
+            .promoter = p,
+            .coding = codingRegion,
         };
     }
 
     pub fn deinit(self: Komagataella, allocator: std.mem.Allocator) void {
         self.plasmid.deinit(allocator);
+        self.coding.deinit(allocator);
+    }
+
+    fn checkPromoter(dna: fasta.DNA) promoter {
+        const aox1Start = std.mem.indexOf(u8, dna.sequence, "AGATCTAACATCCAAA");
+        const aox1End = std.mem.indexOf(u8, dna.sequence, "ATTCGAAACGA") orelse 0;
+
+        const gapStart = std.mem.indexOf(u8, dna.sequence, "AGATCTTTTTTGTAGAAATG");
+        const gapEnd = std.mem.indexOf(u8, dna.sequence, "TATTTCAATCAATTGAACAAC") orelse 0;
+
+        if (aox1Start) |value| {
+            if (value == 0 and aox1End == 930) {
+                return promoter.aox1;
+            }
+        }
+        if (gapStart) |value| {
+            if (value == 0 and gapEnd == 459) {
+                return promoter.gap;
+            }
+        }
+        return promoter.unknown;
+    }
+
+    fn getCodingRegion(allocator: std.mem.Allocator, dna: fasta.DNA, p: promoter) !fasta.DNA {
+        switch(p) {
+            .aox1 => {
+                const codingEnd = std.mem.indexOf(u8, dna.sequence, "GTTTGTAGCCTTAGA") orelse dna.sequence.len;
+                return try fasta.DNA.init(allocator, "CodingRegion", dna.sequence[940..codingEnd]);
+            },
+            .gap => {
+                const codingEnd = std.mem.indexOf(u8, dna.sequence, "GTTTTAGCCTTAGAC") orelse dna.sequence.len;                
+                return try fasta.DNA.init(allocator, "CodingRegion", dna.sequence[492..codingEnd]);
+            },
+            .unknown => {unreachable;},
+        }
     }
 };
 
-fn isInducible(k: Komagataella) bool {
-    const d = std.mem.indexOf(u8, k.plasmid.sequence, "AGATCTAACATCCAAA");
-    const e = std.mem.indexOf(u8, k.plasmid.sequence, "ATTCGAAACGA") orelse 0;
-
-    if (d) |value| {
-        if (value == 0 and e == 930) {
-            return true;
-        }
-    }
-    return false;
-}
-
 fn isSecreted(k: Komagataella) bool {
     if (std.mem.eql(u8, k.plasmid.sequence[940..949], "ATGAGATTT") and
-            (std.mem.eql(u8, k.plasmid.sequence[1198..1207], "GCTGAAGCT"))
-        ) {
+        (std.mem.eql(u8, k.plasmid.sequence[1198..1207], "GCTGAAGCT")))
+    {
         return true;
     }
     return false;
@@ -55,14 +87,12 @@ fn matureProtein(k: Komagataella, allocator: std.mem.Allocator) !void {
         return;
     }
     std.debug.print("endpoint not found\n", .{});
-
 }
 
 pub fn parseSingleDNA(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !fasta.DNA {
     // open file
     const file = try std.Io.Dir.cwd().openFile(io, filepath, .{});
     defer file.close(io);
-
 
     const state = enum { inHeader, inSequence };
     var myState: ?state = null;
@@ -111,12 +141,12 @@ pub fn parseSingleDNA(io: Io, allocator: std.mem.Allocator, filepath: []const u8
             }
         }
     }
-    return try fasta.DNA.init(allocator, header.items, sequence.items);    
+    return try fasta.DNA.init(allocator, header.items, sequence.items);
 }
 
 pub fn main(init: std.process.Init) !void {
     const stdout = std.Io.File.stdout();
-    
+
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len != 2) {
         std.debug.print("Usage: {s} <filename.fa>\n", .{args[0]});
@@ -124,21 +154,6 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const filepath = args[1];
-    // const file = try std.Io.Dir.cwd().openFile(init.io, filepath, .{});
-    // defer file.close(init.io);
-
-    // // Starting DNA queue
-    // var queue: std.Io.Queue(fasta.DNA) = .init(&.{});
-    // var producer_task = try init.io.concurrent(fasta.parseDNA, .{ init.io, init.gpa, &queue, file });
-    // defer producer_task.cancel(init.io) catch {};
-
-    // var myPlasmid = try queue.getOne(init.io);
-    // try myPlasmid.addTranslation(init.gpa);
-    // defer myPlasmid.deinit(init.gpa);
-
-    // const k = Komagataella{
-    //     .plasmid = &myPlasmid,
-    // };
 
     var k = try Komagataella.init(init.io, init.gpa, filepath);
     defer k.deinit(init.gpa);
@@ -148,18 +163,24 @@ pub fn main(init: std.process.Init) !void {
     try stdout.writeStreamingAll(init.io, fs);
 
     try k.plasmid.mapDNA(init.gpa, init.io, stdout);
-    const b = isInducible(k);
-    if (b) {
-        try stdout.writeStreamingAll(init.io, "The plasmid is inducible!\n");
+    switch (k.promoter) {
+        .aox1 => {
+            try stdout.writeStreamingAll(init.io, "Promoter is inducible aox1.\n");
+        },
+        .gap => {
+            try stdout.writeStreamingAll(init.io, "Promoter is constitutive gap.\n");
+        },
+        .unknown => {
+            try stdout.writeStreamingAll(init.io, "Unknown promoter type.\n");
+        },
     }
     const b2 = isSecreted(k);
     if (b2) {
         try stdout.writeStreamingAll(init.io, "The protein is secreted.\n");
     }
     try matureProtein(k, init.gpa);
-
-    const d2 = try Komagataella.init(init.io, init.gpa, "sequences/pTAN213.fa");
-    defer d2.deinit(init.gpa);
-
+    const coding = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.coding});
+    defer init.gpa.free(coding);
+    try stdout.writeStreamingAll(init.io, coding);
 
 }

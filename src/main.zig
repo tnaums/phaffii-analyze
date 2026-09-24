@@ -56,14 +56,17 @@ const Komagataella = struct {
     }
 
     fn getCodingRegion(allocator: std.mem.Allocator, dna: fasta.DNA, p: promoter) !fasta.DNA {
+        const newHeader = try std.fmt.allocPrint(allocator, "{s}|{s}", .{ dna.header, "coding"});
+        defer allocator.free(newHeader);
+        
         switch(p) {
             .aox1 => {
                 const codingEnd = std.mem.indexOf(u8, dna.sequence, "GTTTGTAGCCTTAGA") orelse dna.sequence.len;
-                return try fasta.DNA.init(allocator, "CodingRegion", dna.sequence[940..codingEnd]);
+                return try fasta.DNA.init(allocator, newHeader, dna.sequence[940..codingEnd]);
             },
             .gap => {
                 const codingEnd = std.mem.indexOf(u8, dna.sequence, "GTTTTAGCCTTAGAC") orelse dna.sequence.len;                
-                return try fasta.DNA.init(allocator, "CodingRegion", dna.sequence[492..codingEnd]);
+                return try fasta.DNA.init(allocator, newHeader, dna.sequence[492..codingEnd]);
             },
             .unknown => {unreachable;},
         }
@@ -80,40 +83,30 @@ const Komagataella = struct {
     }
 
     fn recombinantProtein(allocator: std.mem.Allocator, codingRegion: fasta.DNA, s: secretion) !fasta.Protein {
+        const newHeader = try std.fmt.allocPrint(allocator, "{s}|{s}", .{ codingRegion.header[0..codingRegion.header.len - 7], "mature"});
+        defer allocator.free(newHeader);
         var fullP: []u8 = undefined;
-        std.debug.print("secretion value: {any}\n", .{s});
+
         if (codingRegion.translation) |value| {
             fullP = value[0];
         }
         var parts = std.mem.tokenizeScalar(u8, fullP, '*');
         var shortLeft = parts.next() orelse fullP;
 
-        std.debug.print("{s}\n", .{fullP});
-        std.debug.print("{s}\n", .{shortLeft});
-
         switch (s) {
             .alpha => {
-                return try fasta.Protein.init(allocator, "mature", shortLeft[89..]);
+                return try fasta.Protein.init(allocator, newHeader, shortLeft[89..]);
             },
 
             .ost => {
-                return try fasta.Protein.init(allocator, "mature", shortLeft[92..]);
+                return try fasta.Protein.init(allocator, newHeader, shortLeft[92..]);
             },
             .cytoplasmic => {
-                return try fasta.Protein.init(allocator, "mature", shortLeft);
+                return try fasta.Protein.init(allocator, newHeader, shortLeft);
             },
         }
     }
 };
-
-fn isSecreted(k: Komagataella) bool {
-    if (std.mem.eql(u8, k.plasmid.sequence[940..949], "ATGAGATTT") and
-        (std.mem.eql(u8, k.plasmid.sequence[1198..1207], "GCTGAAGCT")))
-    {
-        return true;
-    }
-    return false;
-}
 
 pub fn parseSingleDNA(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !fasta.DNA {
     // open file
@@ -184,7 +177,7 @@ pub fn main(init: std.process.Init) !void {
     var k = try Komagataella.init(init.io, init.gpa, filepath);
     defer k.deinit(init.gpa);
 
-    const fs = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.plasmid});
+    const fs = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.coding});
     defer init.gpa.free(fs);
     try stdout.writeStreamingAll(init.io, fs);
 

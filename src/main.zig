@@ -10,6 +10,7 @@ const Komagataella = struct {
     promoter: promoter,
     coding: fasta.DNA,
     secretion: secretion,
+    recombinant: fasta.Protein,
 
     pub fn init(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !Komagataella {
         var dna = try parseSingleDNA(io, allocator, filepath);
@@ -18,17 +19,20 @@ const Komagataella = struct {
         var codingRegion = try getCodingRegion(allocator, dna, p);
         try codingRegion.addTranslation(allocator);
         const s = determineSecretion(codingRegion);
+        const r = try recombinantProtein(allocator, codingRegion, s);
         return Komagataella{
             .plasmid = dna,
             .promoter = p,
             .coding = codingRegion,
             .secretion = s,
+            .recombinant = r,
         };
     }
 
     pub fn deinit(self: Komagataella, allocator: std.mem.Allocator) void {
         self.plasmid.deinit(allocator);
         self.coding.deinit(allocator);
+        self.recombinant.deinit(allocator);
     }
 
     fn checkPromoter(dna: fasta.DNA) promoter {
@@ -74,6 +78,32 @@ const Komagataella = struct {
         }
         return secretion.cytoplasmic;
     }
+
+    fn recombinantProtein(allocator: std.mem.Allocator, codingRegion: fasta.DNA, s: secretion) !fasta.Protein {
+        var fullP: []u8 = undefined;
+        std.debug.print("secretion value: {any}\n", .{s});
+        if (codingRegion.translation) |value| {
+            fullP = value[0];
+        }
+        var parts = std.mem.tokenizeScalar(u8, fullP, '*');
+        var shortLeft = parts.next() orelse fullP;
+
+        std.debug.print("{s}\n", .{fullP});
+        std.debug.print("{s}\n", .{shortLeft});
+
+        switch (s) {
+            .alpha => {
+                return try fasta.Protein.init(allocator, "mature", shortLeft[89..]);
+            },
+
+            .ost => {
+                return try fasta.Protein.init(allocator, "mature", shortLeft[92..]);
+            },
+            .cytoplasmic => {
+                return try fasta.Protein.init(allocator, "mature", shortLeft);
+            },
+        }
+    }
 };
 
 fn isSecreted(k: Komagataella) bool {
@@ -83,24 +113,6 @@ fn isSecreted(k: Komagataella) bool {
         return true;
     }
     return false;
-}
-
-fn matureProtein(k: Komagataella, allocator: std.mem.Allocator) !void {
-    const endpoint = std.mem.indexOf(u8, k.plasmid.sequence, "TCTAGA");
-    if (endpoint) |v| {
-        const sequence = k.plasmid.sequence[1207..v];
-        var coding = try fasta.DNA.init(allocator, "mature", sequence);
-        defer coding.deinit(allocator);
-        try coding.addTranslation(allocator);
-        var protein: fasta.Protein = undefined;
-        defer protein.deinit(allocator);
-        if (coding.translation) |value| {
-            protein = try fasta.Protein.init(allocator, "mature", value[0]);
-        }
-        std.debug.print("{f}\n", .{protein});
-        return;
-    }
-    std.debug.print("endpoint not found\n", .{});
 }
 
 pub fn parseSingleDNA(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !fasta.DNA {
@@ -176,7 +188,7 @@ pub fn main(init: std.process.Init) !void {
     defer init.gpa.free(fs);
     try stdout.writeStreamingAll(init.io, fs);
 
-    try k.plasmid.mapDNA(init.gpa, init.io, stdout);
+//    try k.plasmid.mapDNA(init.gpa, init.io, stdout);
     switch (k.promoter) {
         .aox1 => {
             try stdout.writeStreamingAll(init.io, "Promoter is inducible aox1.\n");
@@ -199,13 +211,8 @@ pub fn main(init: std.process.Init) !void {
             try stdout.writeStreamingAll(init.io, "Possible cytoplasmic protein.\n");
         }
     }
-    // const b2 = isSecreted(k);
-    // if (b2) {
-    //     try stdout.writeStreamingAll(init.io, "The protein is secreted.\n");
-    // }
-    try matureProtein(k, init.gpa);
-    const coding = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.coding});
-    defer init.gpa.free(coding);
-    try stdout.writeStreamingAll(init.io, coding);
+    const mp = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.recombinant});
+    defer init.gpa.free(mp);
+    try stdout.writeStreamingAll(init.io, mp);
 
 }

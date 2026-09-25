@@ -5,9 +5,9 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .fasta = .{
-            .url = "git+https://github.com/tnaums/fasta#2a0498a8fd9fe3aae0def26ce40f50fd346da6d3",
+            .url = "git+https://github.com/tnaums/fasta#4b18c684a1f76023a01745f9bfe681b9f5e549ab",
             .branch = "main",
-            .hash = "fasta-0.0.0-NNn2trFiAAAB-hAQh39S10GWsL8mUTMejTHiLfhAuU3m",
+            .hash = "fasta-0.0.0-NNn2tuBrAABL078TiHm2qecdOY0yuA7OXKhb3Yd20iLc",
         },
     },
     .paths = .{

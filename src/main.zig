@@ -13,7 +13,7 @@ const Komagataella = struct {
     recombinant: fasta.Protein,
 
     pub fn init(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !Komagataella {
-        var dna = try parseSingleDNA(io, allocator, filepath);
+        var dna = try fasta.parseSingleDNA(io, allocator, filepath);
         try dna.addTranslation(allocator);
         const p = checkPromoter(dna);
         var codingRegion = try getCodingRegion(allocator, dna, p);
@@ -106,62 +106,36 @@ const Komagataella = struct {
             },
         }
     }
-};
 
-pub fn parseSingleDNA(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !fasta.DNA {
-    // open file
-    const file = try std.Io.Dir.cwd().openFile(io, filepath, .{});
-    defer file.close(io);
-
-    const state = enum { inHeader, inSequence };
-    var myState: ?state = null;
-    // initialize ArrayLists
-    var header = std.ArrayList(u8).empty;
-    defer header.deinit(allocator);
-    var sequence = std.ArrayList(u8).empty;
-    defer sequence.deinit(allocator);
-
-    var buf: [1024]u8 = undefined;
-    // parse out the info
-    while (true) {
-        const n = file.readStreaming(io, &.{&buf}) catch |err| {
-            if (err == error.EndOfStream) break;
-            return err;
-        };
-        if (n == 0) {
-            if (header.items.len == 0) break;
-            break;
+    pub fn format(self: Komagataella, writer: *Io.Writer) !void {
+        const bp = self.plasmid.sequence.len;
+        try writer.print("  plasmid: {s}\n   length: {d}bp\n", .{ self.plasmid.header, bp });
+        switch (self.promoter) {
+            .aox1 => {
+                try writer.print(" promoter: methanol inducible aox1\n", .{});
+            },
+            .gap => {
+                try writer.print(" promoter: constitutive gap promoter\n", .{});
+            },
+            .unknown => {
+                try writer.print(" promoter: unknown, probably not a pPICZ expression plasmid\n", .{});
+            },
         }
-        var i: u16 = 0;
-        while (i < n) : (i += 1) {
-            if (myState) |s| {
-                switch (s) {
-                    .inHeader => {
-                        if (buf[i] == '\n') {
-                            myState = state.inSequence;
-                            continue;
-                        }
-                        try header.append(allocator, buf[i]);
-                    },
-                    .inSequence => {
-                        if (buf[i] == '>') { // if a second sequence begins, just return the first one
-                            return try fasta.DNA.init(allocator, header.items, sequence.items);
-                        }
-                        if (buf[i] != '\n') {
-                            try sequence.append(allocator, std.ascii.toUpper(buf[i]));
-                        }
-                    },
-                }
-            } else {
-                if (buf[i] == '>') {
-                    myState = state.inHeader;
-                    continue;
-                }
-            }
+        switch (self.secretion) {
+            .alpha => {
+                try writer.print("secretion: α factor\n", .{});
+            },
+            .ost => {
+                try writer.print("secretion: ost1\n", .{});
+            },
+            .cytoplasmic => {
+                try writer.print("secretion: standard SSS not detected, may be cytoplasmic\n", .{});
+            },
         }
+        try writer.print("\n", .{});
+        try writer.print("{f}\n", .{self.recombinant});
     }
-    return try fasta.DNA.init(allocator, header.items, sequence.items);
-}
+};
 
 pub fn main(init: std.process.Init) !void {
     const stdout = std.Io.File.stdout();
@@ -181,31 +155,12 @@ pub fn main(init: std.process.Init) !void {
     defer init.gpa.free(fs);
     try stdout.writeStreamingAll(init.io, fs);
 
-//    try k.plasmid.mapDNA(init.gpa, init.io, stdout);
-    switch (k.promoter) {
-        .aox1 => {
-            try stdout.writeStreamingAll(init.io, "Promoter is inducible aox1.\n");
-        },
-        .gap => {
-            try stdout.writeStreamingAll(init.io, "Promoter is constitutive gap.\n");
-        },
-        .unknown => {
-            try stdout.writeStreamingAll(init.io, "Unknown promoter type.\n");
-        },
-    }
-    switch (k.secretion) {
-        .alpha => {
-            try stdout.writeStreamingAll(init.io, "Secreted protein with alpha factor.\n");
-        },
-        .ost => {
-            try stdout.writeStreamingAll(init.io, "Secreted protein with ost1.\n");
-        },
-        .cytoplasmic => {
-            try stdout.writeStreamingAll(init.io, "Possible cytoplasmic protein.\n");
-        }
-    }
-    const mp = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.recombinant});
-    defer init.gpa.free(mp);
-    try stdout.writeStreamingAll(init.io, mp);
+    try k.coding.mapDNA(init.gpa, init.io, stdout, fasta.readingframe.first);
+
+    try stdout.writeStreamingAll(init.io, "----------------------------------------\n");
+
+    const kf = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k});
+    defer init.gpa.free(kf);
+    try stdout.writeStreamingAll(init.io, kf);
 
 }

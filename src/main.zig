@@ -135,6 +135,12 @@ const Komagataella = struct {
         try writer.print("\n", .{});
         try writer.print("{f}\n", .{self.recombinant});
     }
+
+    pub fn printCSV(self: Komagataella, io: Io, file: Io.File) !void {
+        var buffer: [70]u8 = undefined;
+        const line = try std.fmt.bufPrint(&buffer, "{s},{s},{s},{d:.2},{d}\n", .{ self.plasmid.header[0..7], @tagName(self.promoter), @tagName(self.secretion), self.recombinant.mass, self.recombinant.sequence.len });
+        try file.writeStreamingAll(io, line);
+    }
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -162,5 +168,7 @@ pub fn main(init: std.process.Init) !void {
     const kf = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k});
     defer init.gpa.free(kf);
     try stdout.writeStreamingAll(init.io, kf);
+
+    try k.printCSV(init.io, stdout);
 
 }

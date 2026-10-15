@@ -4,6 +4,7 @@ const Io = std.Io;
 
 const promoter = enum { aox1, gap, unknown };
 const secretion = enum { alpha, ost, cytoplasmic };
+const organism = enum { unknown };
 
 const Komagataella = struct {
     plasmid: fasta.DNA,
@@ -11,6 +12,7 @@ const Komagataella = struct {
     coding: fasta.DNA,
     secretion: secretion,
     recombinant: fasta.Protein,
+    organism: organism,
 
     pub fn init(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !Komagataella {
         var dna = try fasta.parseSingleDNA(io, allocator, filepath);
@@ -20,15 +22,21 @@ const Komagataella = struct {
         try codingRegion.addTranslation(allocator);
         const s = determineSecretion(codingRegion);
         const r = try recombinantProtein(allocator, codingRegion, s);
+        const o = getOrganism();
         return Komagataella{
             .plasmid = dna,
             .promoter = p,
             .coding = codingRegion,
             .secretion = s,
             .recombinant = r,
+            .organism = o,
         };
     }
 
+    fn getOrganism() organism {
+        return organism.unknown;
+    }
+    
     pub fn deinit(self: Komagataella, allocator: std.mem.Allocator) void {
         self.plasmid.deinit(allocator);
         self.coding.deinit(allocator);
@@ -132,9 +140,16 @@ const Komagataella = struct {
                 try writer.print("secretion: standard SSS not detected, may be cytoplasmic\n", .{});
             },
         }
+        switch (self.organism) {
+            .unknown => {
+                try writer.print(" organism: unknown\n", .{});
+            }
+        }        
         try writer.print("\n", .{});
         try writer.print("{f}\n", .{self.recombinant});
+
     }
+
 
     pub fn printCSV(self: Komagataella, io: Io, file: Io.File) !void {
         var buffer: [70]u8 = undefined;
@@ -174,7 +189,8 @@ pub fn main(init: std.process.Init) !void {
 }
 
 
-/// This is code to integrate for analyzing all plasmids at once...
+
+// This is code to integrate for analyzing all plasmids at once...
 // const KpFolder = struct {
 //     name: []const u8,
 //     seqFile: ?[]const u8 = null,

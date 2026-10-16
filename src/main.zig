@@ -229,34 +229,34 @@ const Komagataella = struct {
     }
 };
 
-pub fn main(init: std.process.Init) !void {
-    const stdout = std.Io.File.stdout();
+// pub fn main(init: std.process.Init) !void {
+//     const stdout = std.Io.File.stdout();
 
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len != 2) {
-        std.debug.print("Usage: {s} <filename.fa>\n", .{args[0]});
-        return;
-    }
+//     const args = try init.minimal.args.toSlice(init.arena.allocator());
+//     if (args.len != 2) {
+//         std.debug.print("Usage: {s} <filename.fa>\n", .{args[0]});
+//         return;
+//     }
 
-    const filepath = args[1];
+//     const filepath = args[1];
 
-    var k = try Komagataella.init(init.io, init.gpa, filepath);
-    defer k.deinit(init.gpa);
+//     var k = try Komagataella.init(init.io, init.gpa, filepath);
+//     defer k.deinit(init.gpa);
 
-    const fs = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.coding});
-    defer init.gpa.free(fs);
-    try stdout.writeStreamingAll(init.io, fs);
+//     const fs = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.coding});
+//     defer init.gpa.free(fs);
+//     try stdout.writeStreamingAll(init.io, fs);
         
-    try k.coding.mapDNA(init.gpa, init.io, stdout, fasta.readingframe.first);
+//     try k.coding.mapDNA(init.gpa, init.io, stdout, fasta.readingframe.first);
 
-    try stdout.writeStreamingAll(init.io, "----------------------------------------\n");
+//     try stdout.writeStreamingAll(init.io, "----------------------------------------\n");
 
-    const kf = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k});
-    defer init.gpa.free(kf);
-    try stdout.writeStreamingAll(init.io, kf);
+//     const kf = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k});
+//     defer init.gpa.free(kf);
+//     try stdout.writeStreamingAll(init.io, kf);
 
-    try k.printCSV(init.io, stdout);
-}
+//     try k.printCSV(init.io, stdout);
+// }
 
 fn getBlastpBestHit(allocator: std.mem.Allocator, blastResult: []u8) !?BestLocalBlastHit {
     var def: []u8 = undefined;
@@ -289,66 +289,77 @@ fn getBlastpBestHit(allocator: std.mem.Allocator, blastResult: []u8) !?BestLocal
 //     seqFile: ?[]const u8 = null,
 // };
 
-// pub fn main(init: std.process.Init) !void {
-//     const io = init.io;
-// //    const allocator = init.gpa;
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa;
+    const stdout = std.Io.File.stdout();
+    
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len != 2) {
+        std.debug.print("Usage: {s} <directory>\n", .{args[0]});
+        return;
+    }
 
-//     const args = try init.minimal.args.toSlice(init.arena.allocator());
-//     if (args.len != 2) {
-//         std.debug.print("Usage: {s} <directory>\n", .{args[0]});
-//         return;
-//     }
+    const directory = args[1];
+    const cwd = std.Io.Dir.cwd();
+    const dir = cwd.openDir(io, directory, .{ .iterate = true }) catch |err| {
+        return err;
+    };
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        switch (entry.kind) {
+            .file => {
+                continue;
+            },
+            .directory => {
+                const start = std.mem.startsWith(u8, entry.name, "pTAN");
+                if (start) {
+                    const answer = try returnExpectedFile(allocator, io, directory, entry.name);
+                    if (answer) |value| {
+                        defer allocator.free(value);
+                        const fullPath = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ directory, entry.name, value });
+                        defer allocator.free(fullPath);
+                        var k = Komagataella.init(io, allocator, fullPath) catch |err| {
+                            if (err == KpError.PromoterNotFound) continue; // ignore if it isn't one of the expression plasmids
+                            return err;
+                        };
+                        defer k.deinit(allocator);
+                        const kf = try std.fmt.allocPrint(allocator, "{f}\n", .{k});
+                        defer allocator.free(kf);
+                        try stdout.writeStreamingAll(io, kf);
+                        try k.printCSV(io, stdout);
+                        try stdout.writeStreamingAll(io, "----------------------------------------\n");
+                    } else {
+                        continue;
+                    }
 
-//     const directory = args[1];
-//     const cwd = std.Io.Dir.cwd();
-//     const dir = cwd.openDir(io, directory, .{ .iterate = true }) catch |err| {
-//         return err;
-//     };
-//     var it = dir.iterate();
-//     while (try it.next(io)) |entry| {
-//         switch (entry.kind) {
-//             .file => {
-//                 const start = std.mem.startsWith(u8, entry.name, "pTAN");
-//                 const end = std.mem.endsWith(u8, entry.name, ".fa");
-//                 const length = (entry.name.len == 10);
-//                 if (start and end and length) {
-//                     std.debug.print("{s}\n{s}\n", .{entry.name, @tagName(entry.kind)});
-//                     }
-//             },
-//             .directory => {
-//                 const start = std.mem.startsWith(u8, entry.name, "pTAN");
-//                 if (start) {
-//                     const answer = try hasExpectedFile(io, directory, entry.name);
-//                     if (!answer){
-//                         std.debug.print("Directory: {s}\n", .{entry.name});
-//                         std.debug.print("Does not have expected file.\n", .{});
-//                     }
-//                 }
-//             },
-//             else => { continue; },
-//         }
-//     }
-// }
+                }
+            },
+            else => { continue; },
+        }
+    }
+}
 
-// fn hasExpectedFile(io: Io, directory: []const u8, folder: []const u8) !bool {
-//     var buff: [1024]u8 = undefined;
-//     const path = try std.fmt.bufPrint(&buff, "{s}/{s}", .{directory,folder});
-//     const subdir = std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| {
-//         return err;
-//     };
-//     var it = subdir.iterate();
-//     while (try it.next(io)) |entry| {
-//         switch (entry.kind) {
-//             .file => {
-//                 const start = std.mem.startsWith(u8, entry.name, "pTAN");
-//                 const end = std.mem.endsWith(u8, entry.name, ".fa");
-//                 const length = (entry.name.len == 10);
-//                 if (start and end and length) {
-//                     return true;
-//                     }
-//             },
-//             else => { continue; },
-//         }
-//     }
-//     return false;
-// }
+fn returnExpectedFile(allocator: std.mem.Allocator, io: Io, directory: []const u8, folder: []const u8) !?[]const u8 {
+    var buff: [1024]u8 = undefined;
+    const path = try std.fmt.bufPrint(&buff, "{s}/{s}", .{directory,folder});
+    const subdir = std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| {
+        return err;
+    };
+    var it = subdir.iterate();
+    while (try it.next(io)) |entry| {
+        switch (entry.kind) {
+            .file => {
+                const start = std.mem.startsWith(u8, entry.name, "pTAN");
+                const end = std.mem.endsWith(u8, entry.name, ".fa");
+                const length = (entry.name.len == 10);
+                if (start and end and length) {
+                    const def = try allocator.dupe(u8, entry.name);
+                    return def;
+                    }
+            },
+            else => { continue; },
+        }
+    }
+    return null;
+}

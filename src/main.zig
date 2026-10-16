@@ -4,7 +4,25 @@ const Io = std.Io;
 
 const promoter = enum { aox1, gap, unknown };
 const secretion = enum { alpha, ost, cytoplasmic };
-const organism = enum { unknown };
+const organism = enum { unknown, verticillioides };
+
+const BestLocalBlastHit = struct {
+    identity: usize,
+    def: []const u8,
+
+    pub fn init(allocator: std.mem.Allocator, idLength: usize, def: []const u8) !BestLocalBlastHit {
+        const d = try allocator.dupe(u8, def);
+        errdefer allocator.free(d);
+        return .{
+            .identity = idLength,
+            .def = d,
+        };
+    }
+
+    pub fn deinit(self: BestLocalBlastHit, allocator: std.mem.Allocator) void {
+        allocator.free(self.def);
+    }
+};
 
 const Komagataella = struct {
     plasmid: fasta.DNA,
@@ -12,7 +30,7 @@ const Komagataella = struct {
     coding: fasta.DNA,
     secretion: secretion,
     recombinant: fasta.Protein,
-    organism: organism,
+    localBlast: ?BestLocalBlastHit,
 
     pub fn init(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !Komagataella {
         var dna = try fasta.parseSingleDNA(io, allocator, filepath);
@@ -22,25 +40,71 @@ const Komagataella = struct {
         try codingRegion.addTranslation(allocator);
         const s = determineSecretion(codingRegion);
         const r = try recombinantProtein(allocator, codingRegion, s);
-        const o = getOrganism();
+        const lb = try localBlastBestHit(io, allocator, r);
+//        const o = try getOrganism(io, allocator, r);
         return Komagataella{
             .plasmid = dna,
             .promoter = p,
             .coding = codingRegion,
             .secretion = s,
             .recombinant = r,
-            .organism = o,
+            .localBlast = lb,
         };
     }
 
-    fn getOrganism() organism {
-        return organism.unknown;
+    fn localBlastBestHit(io: Io, allocator: std.mem.Allocator, r: fasta.Protein) !?BestLocalBlastHit {
+        // first, need to write protein to disk as a fasta file
+        const queryfile = try std.Io.Dir.cwd().createFile(io, "blastdb/query.fa", .{});
+        defer queryfile.close(io);
+
+        var writebuf: [1024]u8 = undefined;
+        const queryPrint = try std.fmt.bufPrint(&writebuf, "{f}", .{r});
+        try queryfile.writeStreamingAll(io, queryPrint);
+        // second, perform localblast against database
+            const argv1 = [_][]const u8{ "blastp", "-query", "blastdb/query.fa", "-db", "blastdb/combined/combined.aa.fasta", "-outfmt", "5", "-out", "-", "-evalue", "1e-50"};
+
+        const proc1 = try std.process.run(
+            allocator,
+            io,
+            .{ .argv = &argv1 },
+        );
+        defer allocator.free(proc1.stdout);
+        defer allocator.free(proc1.stderr);
+        switch (proc1.term) {
+            .exited => |eCode| {
+                if (eCode != 0) {
+                    std.debug.print(
+                        "P1 did not exit cleanly with code {}\n",
+                        .{eCode},
+                    );
+                } else {
+                    const localBlast = try getBlastpBestHit(allocator, proc1.stdout);
+                    if (localBlast) |value| {
+                        return value;
+                    }
+                    return null;
+                }
+            },
+            .signal => {
+                std.debug.print("P1 was killed by a signal.\n", .{});
+            },
+            .stopped => {
+                std.debug.print("P1 was stopped.\n", .{});
+            },
+            .unknown => {
+                std.debug.print("P1 terminated: unknown status.\n", .{});
+            },
+        }
+        return null;
     }
     
     pub fn deinit(self: Komagataella, allocator: std.mem.Allocator) void {
         self.plasmid.deinit(allocator);
         self.coding.deinit(allocator);
         self.recombinant.deinit(allocator);
+        if (self.localBlast) |value| {
+            value.deinit(allocator);
+        }
     }
 
     fn checkPromoter(dna: fasta.DNA) promoter {
@@ -140,11 +204,11 @@ const Komagataella = struct {
                 try writer.print("secretion: standard SSS not detected, may be cytoplasmic\n", .{});
             },
         }
-        switch (self.organism) {
-            .unknown => {
-                try writer.print(" organism: unknown\n", .{});
-            }
-        }        
+        if (self.localBlast) |value| {
+            try writer.print("localBlast: {s}\n", .{value.def});
+        } else {
+            try writer.print("localBlast: none\n", .{});
+        }
         try writer.print("\n", .{});
         try writer.print("{f}\n", .{self.recombinant});
 
@@ -187,6 +251,39 @@ pub fn main(init: std.process.Init) !void {
     try k.printCSV(init.io, stdout);
 
 }
+
+fn getBlastpBestHit(allocator: std.mem.Allocator, blastResult: []u8) !?BestLocalBlastHit {
+    var def: []u8 = undefined;
+    var size: usize = undefined;
+    defer allocator.free(def);
+    
+//    std.debug.print("{s}\n", .{blastResult});
+    var hits = std.mem.tokenizeSequence(u8, blastResult, "<Hit>");
+    _ = hits.next();
+    if (hits.next()) |value| {
+        var lines = std.mem.tokenizeScalar(u8, value, '\n');
+        while (lines.next()) |line| {
+            const cleaned = std.mem.trim(u8, line, " ");
+            if (std.mem.startsWith(u8, cleaned, "<Hit_def>")) {
+                std.debug.print("{s}\n", .{cleaned[9..cleaned.len - 10]});
+                def = try allocator.dupe(u8, cleaned[9..cleaned.len - 10]);
+                std.debug.print("{s}\n", .{def});
+            }
+            
+            if (std.mem.startsWith(u8, cleaned, "<Hsp_identity>")) {
+                std.debug.print("{s}\n", .{cleaned});
+                size = std.fmt.parseInt(usize, cleaned[14..cleaned.len - 15], 10) catch {
+                    return null;
+                };
+                std.debug.print("{d}\n", .{size});
+            }
+
+        }
+        return try BestLocalBlastHit.init(allocator, size, def);
+    }
+    return null;
+}
+
 
 
 

@@ -6,6 +6,11 @@ const promoter = enum { aox1, gap, unknown };
 const secretion = enum { alpha, ost, cytoplasmic };
 const organism = enum { unknown, verticillioides };
 
+const KpError = error{
+    PromoterNotFound,
+    CodingNotFound,
+};
+
 const BestLocalBlastHit = struct {
     identity: usize,
     def: []const u8,
@@ -34,12 +39,15 @@ const Komagataella = struct {
 
     pub fn init(io: Io, allocator: std.mem.Allocator, filepath: []const u8) !Komagataella {
         var dna = try fasta.parseSingleDNA(io, allocator, filepath);
+        errdefer dna.deinit(allocator);
         try dna.addTranslation(allocator);
         const p = checkPromoter(dna);
         var codingRegion = try getCodingRegion(allocator, dna, p);
+        errdefer codingRegion.deinit(allocator);
         try codingRegion.addTranslation(allocator);
         const s = determineSecretion(codingRegion);
         const r = try recombinantProtein(allocator, codingRegion, s);
+        errdefer r.deinit(allocator);
         const lb = try localBlastBestHit(io, allocator, r);
 
         return Komagataella{
@@ -142,7 +150,7 @@ const Komagataella = struct {
                 return try fasta.DNA.init(allocator, newHeader, dna.sequence[492..codingEnd]);
             },
             .unknown => {
-                unreachable;
+                return KpError.PromoterNotFound;
             },
         }
     }
@@ -238,7 +246,7 @@ pub fn main(init: std.process.Init) !void {
     const fs = try std.fmt.allocPrint(init.gpa, "{f}\n", .{k.coding});
     defer init.gpa.free(fs);
     try stdout.writeStreamingAll(init.io, fs);
-
+        
     try k.coding.mapDNA(init.gpa, init.io, stdout, fasta.readingframe.first);
 
     try stdout.writeStreamingAll(init.io, "----------------------------------------\n");

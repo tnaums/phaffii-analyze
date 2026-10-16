@@ -41,7 +41,7 @@ const Komagataella = struct {
         const s = determineSecretion(codingRegion);
         const r = try recombinantProtein(allocator, codingRegion, s);
         const lb = try localBlastBestHit(io, allocator, r);
-//        const o = try getOrganism(io, allocator, r);
+
         return Komagataella{
             .plasmid = dna,
             .promoter = p,
@@ -52,17 +52,27 @@ const Komagataella = struct {
         };
     }
 
+    pub fn deinit(self: Komagataella, allocator: std.mem.Allocator) void {
+        self.plasmid.deinit(allocator);
+        self.coding.deinit(allocator);
+        self.recombinant.deinit(allocator);
+        if (self.localBlast) |value| {
+            value.deinit(allocator);
+        }
+    }
+
     fn localBlastBestHit(io: Io, allocator: std.mem.Allocator, r: fasta.Protein) !?BestLocalBlastHit {
-        // first, need to write protein to disk as a fasta file
+        // first, write mature recombinant protein to disk as a fasta file
+        // this will be overwritten each time
         const queryfile = try std.Io.Dir.cwd().createFile(io, "blastdb/query.fa", .{});
         defer queryfile.close(io);
 
         var writebuf: [1024]u8 = undefined;
         const queryPrint = try std.fmt.bufPrint(&writebuf, "{f}", .{r});
         try queryfile.writeStreamingAll(io, queryPrint);
-        // second, perform localblast against database
-            const argv1 = [_][]const u8{ "blastp", "-query", "blastdb/query.fa", "-db", "blastdb/combined/combined.aa.fasta", "-outfmt", "5", "-out", "-", "-evalue", "1e-50"};
 
+        // second, perform localblast against database
+        const argv1 = [_][]const u8{ "blastp", "-query", "blastdb/query.fa", "-db", "blastdb/combined/combined.aa.fasta", "-outfmt", "5", "-out", "-", "-evalue", "1e-50" };
         const proc1 = try std.process.run(
             allocator,
             io,
@@ -97,15 +107,6 @@ const Komagataella = struct {
         }
         return null;
     }
-    
-    pub fn deinit(self: Komagataella, allocator: std.mem.Allocator) void {
-        self.plasmid.deinit(allocator);
-        self.coding.deinit(allocator);
-        self.recombinant.deinit(allocator);
-        if (self.localBlast) |value| {
-            value.deinit(allocator);
-        }
-    }
 
     fn checkPromoter(dna: fasta.DNA) promoter {
         const aox1Start = std.mem.indexOf(u8, dna.sequence, "AGATCTAACATCCAAA");
@@ -128,24 +129,26 @@ const Komagataella = struct {
     }
 
     fn getCodingRegion(allocator: std.mem.Allocator, dna: fasta.DNA, p: promoter) !fasta.DNA {
-        const newHeader = try std.fmt.allocPrint(allocator, "{s}|{s}", .{ dna.header, "coding"});
+        const newHeader = try std.fmt.allocPrint(allocator, "{s}|{s}", .{ dna.header, "coding" });
         defer allocator.free(newHeader);
-        
-        switch(p) {
+
+        switch (p) {
             .aox1 => {
                 const codingEnd = std.mem.indexOf(u8, dna.sequence, "GTTTGTAGCCTTAGA") orelse dna.sequence.len;
                 return try fasta.DNA.init(allocator, newHeader, dna.sequence[940..codingEnd]);
             },
             .gap => {
-                const codingEnd = std.mem.indexOf(u8, dna.sequence, "GTTTTAGCCTTAGAC") orelse dna.sequence.len;                
+                const codingEnd = std.mem.indexOf(u8, dna.sequence, "GTTTTAGCCTTAGAC") orelse dna.sequence.len;
                 return try fasta.DNA.init(allocator, newHeader, dna.sequence[492..codingEnd]);
             },
-            .unknown => {unreachable;},
+            .unknown => {
+                unreachable;
+            },
         }
     }
 
     fn determineSecretion(dna: fasta.DNA) secretion {
-        if  (std.mem.startsWith(u8, dna.sequence, "ATGAGATTTCCTTCA")) {
+        if (std.mem.startsWith(u8, dna.sequence, "ATGAGATTTCCTTCA")) {
             return secretion.alpha;
         }
         if (std.mem.startsWith(u8, dna.sequence, "ATGAGGCAGGTTTGG")) {
@@ -155,7 +158,7 @@ const Komagataella = struct {
     }
 
     fn recombinantProtein(allocator: std.mem.Allocator, codingRegion: fasta.DNA, s: secretion) !fasta.Protein {
-        const newHeader = try std.fmt.allocPrint(allocator, "{s}|{s}", .{ codingRegion.header[0..codingRegion.header.len - 7], "mature"});
+        const newHeader = try std.fmt.allocPrint(allocator, "{s}|{s}", .{ codingRegion.header[0 .. codingRegion.header.len - 7], "mature" });
         defer allocator.free(newHeader);
         var fullP: []u8 = undefined;
 
@@ -181,39 +184,35 @@ const Komagataella = struct {
 
     pub fn format(self: Komagataella, writer: *Io.Writer) !void {
         const bp = self.plasmid.sequence.len;
-        try writer.print("  plasmid: {s}\n   length: {d}bp\n", .{ self.plasmid.header, bp });
+        try writer.print("   plasmid: {s}\n    length: {d}bp\n", .{ self.plasmid.header, bp });
         switch (self.promoter) {
             .aox1 => {
-                try writer.print(" promoter: methanol inducible aox1\n", .{});
+                try writer.print("  promoter: methanol inducible aox1\n", .{});
             },
             .gap => {
-                try writer.print(" promoter: constitutive gap promoter\n", .{});
+                try writer.print("  promoter: constitutive gap promoter\n", .{});
             },
             .unknown => {
-                try writer.print(" promoter: unknown, probably not a pPICZ expression plasmid\n", .{});
+                try writer.print("  promoter: unknown, probably not a pPICZ expression plasmid\n", .{});
             },
         }
         switch (self.secretion) {
             .alpha => {
-                try writer.print("secretion: α factor\n", .{});
+                try writer.print(" secretion: α factor\n", .{});
             },
             .ost => {
-                try writer.print("secretion: ost1\n", .{});
+                try writer.print(" secretion: ost1\n", .{});
             },
             .cytoplasmic => {
-                try writer.print("secretion: standard SSS not detected, may be cytoplasmic\n", .{});
+                try writer.print(" secretion: standard SSS not detected, may be cytoplasmic\n", .{});
             },
         }
         if (self.localBlast) |value| {
-            try writer.print("localBlast: {s}\n", .{value.def});
-        } else {
-            try writer.print("localBlast: none\n", .{});
+            try writer.print("localBlast: {s}\n  identity: {d}/{d}\n", .{ value.def, value.identity, self.recombinant.sequence.len });
         }
         try writer.print("\n", .{});
         try writer.print("{f}\n", .{self.recombinant});
-
     }
-
 
     pub fn printCSV(self: Komagataella, io: Io, file: Io.File) !void {
         var buffer: [70]u8 = undefined;
@@ -249,43 +248,32 @@ pub fn main(init: std.process.Init) !void {
     try stdout.writeStreamingAll(init.io, kf);
 
     try k.printCSV(init.io, stdout);
-
 }
 
 fn getBlastpBestHit(allocator: std.mem.Allocator, blastResult: []u8) !?BestLocalBlastHit {
     var def: []u8 = undefined;
     var size: usize = undefined;
-    defer allocator.free(def);
-    
-//    std.debug.print("{s}\n", .{blastResult});
+
+    //    std.debug.print("{s}\n", .{blastResult});
     var hits = std.mem.tokenizeSequence(u8, blastResult, "<Hit>");
-    _ = hits.next();
-    if (hits.next()) |value| {
+    _ = hits.next(); // discard header info
+    if (hits.next()) |value| { // if there is a hit, process the best (first) one
         var lines = std.mem.tokenizeScalar(u8, value, '\n');
         while (lines.next()) |line| {
             const cleaned = std.mem.trim(u8, line, " ");
             if (std.mem.startsWith(u8, cleaned, "<Hit_def>")) {
-                std.debug.print("{s}\n", .{cleaned[9..cleaned.len - 10]});
-                def = try allocator.dupe(u8, cleaned[9..cleaned.len - 10]);
-                std.debug.print("{s}\n", .{def});
-            }
-            
-            if (std.mem.startsWith(u8, cleaned, "<Hsp_identity>")) {
-                std.debug.print("{s}\n", .{cleaned});
-                size = std.fmt.parseInt(usize, cleaned[14..cleaned.len - 15], 10) catch {
-                    return null;
-                };
-                std.debug.print("{d}\n", .{size});
+                def = try allocator.dupe(u8, cleaned[9 .. cleaned.len - 10]);
             }
 
+            if (std.mem.startsWith(u8, cleaned, "<Hsp_identity>")) {
+                size = try std.fmt.parseInt(usize, cleaned[14 .. cleaned.len - 15], 10);
+            }
         }
-        return try BestLocalBlastHit.init(allocator, size, def);
+        defer allocator.free(def); // only free if it is defined in the first place
+        return BestLocalBlastHit.init(allocator, size, def) catch return null;
     }
     return null;
 }
-
-
-
 
 // This is code to integrate for analyzing all plasmids at once...
 // const KpFolder = struct {
@@ -353,6 +341,6 @@ fn getBlastpBestHit(allocator: std.mem.Allocator, blastResult: []u8) !?BestLocal
 //             },
 //             else => { continue; },
 //         }
-//     }    
+//     }
 //     return false;
 // }

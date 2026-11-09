@@ -224,8 +224,21 @@ const Komagataella = struct {
     }
 
     pub fn printCSV(self: Komagataella, io: Io, file: Io.File) !void {
-        var buffer: [70]u8 = undefined;
-        const line = try std.fmt.bufPrint(&buffer, "{s},{s},{s},{d:.2},{d}\n", .{ self.plasmid.header[0..7], @tagName(self.promoter), @tagName(self.secretion), self.recombinant.mass, self.recombinant.sequence.len });
+        var buffer: [700]u8 = undefined;
+
+        var line: []u8 = undefined;
+        if (self.localBlast) |value| {
+            var def_buf: [40]u8 = undefined;
+            var definition: []u8 = undefined;
+            if (value.def.len < 40) {
+                definition = try std.fmt.bufPrint(&def_buf, "{s}",.{value.def});
+            } else {
+                definition = try std.fmt.bufPrint(&def_buf, "{s}", .{value.def[0..40]});
+            }
+            line = try std.fmt.bufPrint(&buffer, "{s},{s},{s},{d:.2},{s},{d},{d}\n", .{ self.plasmid.header[0..7], @tagName(self.promoter), @tagName(self.secretion), self.recombinant.mass, definition, value.identity, self.recombinant.sequence.len });
+        } else {
+            line = try std.fmt.bufPrint(&buffer, "{s},{s},{s},{d:.2},,,{d}\n", .{ self.plasmid.header[0..7], @tagName(self.promoter), @tagName(self.secretion), self.recombinant.mass, self.recombinant.sequence.len });
+        }
         try file.writeStreamingAll(io, line);
     }
 };
@@ -354,6 +367,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
     }
+    // First print all Komagataella structs in order, according to format
     var i: u16 = 100;
     while (i < 315) : (i += 1) {
         const k = plasmids.get(@enumFromInt(i));
@@ -364,6 +378,7 @@ pub fn main(init: std.process.Init) !void {
             try stdout.writeStreamingAll(io, "----------------------------------------\n");
         }
     }
+    // Second print all Komagataella structs in csv
     i = 100;
     while (i < 315) : (i += 1) {
         const k = plasmids.get(@enumFromInt(i));

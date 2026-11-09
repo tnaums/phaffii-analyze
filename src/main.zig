@@ -5,7 +5,7 @@ const Io = std.Io;
 const promoter = enum { aox1, gap, unknown };
 const secretion = enum { alpha, ost, cytoplasmic };
 const organism = enum { unknown, verticillioides };
-
+const PlasmidIdentifier = enum(u16) { _ };
 const KpError = error{
     PromoterNotFound,
     CodingNotFound,
@@ -81,6 +81,7 @@ const Komagataella = struct {
 
         // second, perform localblast against database
         const argv1 = [_][]const u8{ "blastp", "-query", "blastdb/query.fa", "-db", "blastdb/combined/combined.aa.fasta", "-outfmt", "5", "-out", "-", "-evalue", "1e-50" };
+//        const argv1 = [_][]const u8{ "blastp", "-query", "blastdb/query.fa", "-db", "blastdb/corn/Zea_mays.Zm-B73-REFERENCE-NAM-5.0.pep.all.fa", "-outfmt", "5", "-out", "-", "-evalue", "1e-50" };        
         const proc1 = try std.process.run(
             allocator,
             io,
@@ -262,7 +263,7 @@ fn getBlastpBestHit(allocator: std.mem.Allocator, blastResult: []u8) !?BestLocal
     var def: []u8 = undefined;
     var size: usize = undefined;
 
-    //    std.debug.print("{s}\n", .{blastResult});
+//    std.debug.print("{s}\n", .{blastResult});
     var hits = std.mem.tokenizeSequence(u8, blastResult, "<Hit>");
     _ = hits.next(); // discard header info
     if (hits.next()) |value| { // if there is a hit, process the best (first) one
@@ -300,6 +301,16 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    var plasmids: std.AutoHashMapUnmanaged(PlasmidIdentifier, Komagataella) = .empty;
+    defer {
+	var it = plasmids.valueIterator();
+	while (it.next()) |value_ptr| {
+	    value_ptr.*.deinit(allocator);
+	}
+	plasmids.deinit(allocator);
+    }
+
+
     const directory = args[1];
     const cwd = std.Io.Dir.cwd();
     const dir = cwd.openDir(io, directory, .{ .iterate = true }) catch |err| {
@@ -314,21 +325,25 @@ pub fn main(init: std.process.Init) !void {
             .directory => {
                 const start = std.mem.startsWith(u8, entry.name, "pTAN");
                 if (start) {
+                    const id: [3]u8 = entry.name[4..7].*;
+                    const integer = try std.fmt.parseInt(u16, &id, 10);
+                    const eid: PlasmidIdentifier = @enumFromInt(integer);
                     const answer = try returnExpectedFile(allocator, io, directory, entry.name);
                     if (answer) |value| {
                         defer allocator.free(value);
                         const fullPath = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ directory, entry.name, value });
                         defer allocator.free(fullPath);
-                        var k = Komagataella.init(io, allocator, fullPath) catch |err| {
+                        const k = Komagataella.init(io, allocator, fullPath) catch |err| {
                             if (err == KpError.PromoterNotFound) continue; // ignore if it isn't one of the expression plasmids
                             return err;
                         };
-                        defer k.deinit(allocator);
-                        const kf = try std.fmt.allocPrint(allocator, "{f}\n", .{k});
-                        defer allocator.free(kf);
-                        try stdout.writeStreamingAll(io, kf);
-                        try k.printCSV(io, stdout);
-                        try stdout.writeStreamingAll(io, "----------------------------------------\n");
+//                        defer k.deinit(allocator);
+                        try plasmids.put(allocator, eid, k);
+                        // const kf = try std.fmt.allocPrint(allocator, "{f}", .{k});
+                        // defer allocator.free(kf);
+                        // try stdout.writeStreamingAll(io, kf);
+//                        try k.printCSV(io, stdout);
+//                        try stdout.writeStreamingAll(io, "----------------------------------------\n");
                     } else {
                         continue;
                     }
@@ -336,6 +351,24 @@ pub fn main(init: std.process.Init) !void {
                 }
             },
             else => { continue; },
+        }
+
+    }
+    var i: u16 = 100;
+    while (i < 315) : (i += 1) {
+        const k = plasmids.get(@enumFromInt(i));
+        if (k) |value| {
+            const kf = try std.fmt.allocPrint(allocator, "{f}", .{value});
+            defer allocator.free(kf);
+            try stdout.writeStreamingAll(io, kf);
+            try stdout.writeStreamingAll(io, "----------------------------------------\n");
+        }
+    }
+    i = 100;
+    while (i < 315) : (i += 1) {
+        const k = plasmids.get(@enumFromInt(i));
+        if (k) |value| {
+            try value.printCSV(io, stdout);
         }
     }
 }
